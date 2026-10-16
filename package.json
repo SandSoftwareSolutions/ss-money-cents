@@ -1,0 +1,45 @@
+{
+  "name": "@sandsoftwaresolutions/money-cents",
+  "version": "0.1.0",
+  "description": "Money as whole cents: read Dutch and English notation, format, split without losing a cent, VAT both ways, explicit rounding.",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.d.ts",
+      "import": "./src/index.js"
+    }
+  },
+  "files": [
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "sideEffects": false,
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "test": "node --test",
+    "pack:check": "npm pack --dry-run"
+  },
+  "keywords": [
+    "money",
+    "cents",
+    "vat",
+    "btw",
+    "currency",
+    "rounding"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/SandSoftwareSolutions/ss-money-cents.git"
+  },
+  "bugs": {
+    "url": "https://github.com/SandSoftwareSolutions/ss-money-cents/issues"
+  },
+  "homepage": "https://github.com/SandSoftwareSolutions/ss-money-cents#readme",
+  "publishConfig": {
+    "access": "public"
+  }
+}
