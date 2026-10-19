@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { randomBytes } from "node:crypto";
 import { test } from "node:test";
 
 import { allocate, format, NL_VAT, percentOf, split, sum, toCents, toDecimal, vatFromGross, vatFromNet } from "./src/index.js";
@@ -128,4 +129,84 @@ test("sum checks every amount", () => {
   assert.throws(() => sum(1.5), TypeError);
   assert.throws(() => sum(Number.MAX_SAFE_INTEGER, 5), /too large|whole number/);
   assert.throws(() => percentOf(Number.MAX_SAFE_INTEGER, 200), RangeError);
+});
+
+test("a float that is not a safe amount is an error, and -0 is 0", () => {
+  assert.throws(() => toCents(1e15), RangeError);
+  assert.throws(() => toCents(1e300), RangeError);
+  assert.equal(Object.is(toCents(-0), 0), true);
+  assert.equal(Object.is(toCents(-0.001), 0), true);
+  assert.equal(Object.is(toCents("-0"), 0), true);
+  assert.equal(toCents(12.345, { round: "half-even" }), 1234);
+  assert.equal(toCents(1e-7), 0);
+  assert.equal(toCents(12345678901234.56), 1234567890123456);
+});
+
+test("a currency sign or code only counts at the start or end: '12 EUR 34' is not 1234 euro", () => {
+  for (const bad of ["1EUR2", "12 EUR 34", "$€5", "€5€", "1,2€3", "USD 5 USD"]) assert.throws(() => toCents(bad), TypeError, bad);
+  for (const [text, cents] of Object.entries({ "USD 5": 500, "5 usd": 500, "EUR-5": -500, "-EUR 5,00": -500, "€ -5,00": -500, "(€ 5,00)": -500, "5,00 €-": -500, "+€5": 500 })) assert.equal(toCents(text), cents, text);
+  assert.throws(() => toCents("(-5,00)"), TypeError); // negative twice
+  assert.throws(() => toCents("-5-"), TypeError);
+  assert.throws(() => toCents("--5"), TypeError);
+});
+
+test("a group of three digits after a leading zero is a decimal, never thousands: '0.001' is not 1 euro", () => {
+  for (const bad of ["0.001", "0.005", "0.123", "0.001.000", "0,123"]) assert.throws(() => toCents(bad), /money-cents/, bad);
+  assert.equal(toCents("0.005", { round: "half-up" }), 1);
+  assert.equal(toCents("0,005", { round: "half-even" }), 0);
+  assert.equal(toCents("1.001"), 100100); // a leading 1 is a normal thousands group
+});
+
+test("rounding of negative amounts goes the right way for floor and ceil", () => {
+  assert.equal(toCents("-1,005", { round: "floor" }), -101);
+  assert.equal(toCents("-1,005", { round: "ceil" }), -100);
+  assert.equal(toCents("-1,001", { round: "floor" }), -101);
+  assert.equal(toCents("-1,009", { round: "trunc" }), -100);
+  assert.equal(toCents("-1,005", { round: "half-up" }), -101);
+  assert.equal(toCents("-1,005", { round: "half-even" }), -100);
+  assert.equal(percentOf(-5, 50, { rounding: "floor" }), -3);
+  assert.equal(percentOf(-5, 50, { rounding: "ceil" }), -2);
+});
+
+test("allocate: exact ratios, no -0, no division by zero, skewed ratios keep their share", () => {
+  assert.deepEqual(allocate(10_000_000_000, [1, 1e-7]), [9_999_999_000, 1000]);
+  assert.deepEqual(allocate(100, [1e-9]), [100]);
+  assert.deepEqual(allocate(100, [1e-7, 0]), [100, 0]);
+  assert.deepEqual(allocate(2, [0.3, 0.3, 0.4]), [1, 0, 1]);
+  assert.deepEqual(allocate(7, [0.1, 0.2, 0.3, 0.4]), [1, 1, 2, 3]);
+  for (const share of allocate(-1, [1, 1])) assert.equal(Object.is(share, -0), false);
+  assert.deepEqual(allocate(-100, [1, 1, 1]), [-34, -33, -33]);
+  assert.throws(() => allocate(100, [0, 0]), RangeError);
+});
+
+test("format keeps every digit of large amounts and shows zero without a minus", () => {
+  assert.equal(format(9007199254740991), "€\u00a090.071.992.547.409,91");
+  assert.equal(format(-0), "€\u00a00,00");
+  assert.equal(format(-5), "€\u00a0-0,05");
+});
+
+test("percentOf accepts '21 %' and vatFromGross refuses -100%", () => {
+  assert.equal(percentOf(1000, "21 %"), 210);
+  assert.throws(() => vatFromGross(100, -100), RangeError);
+});
+
+test("random amounts: toDecimal and format round-trip through toCents; allocate adds up; VAT adds up", () => {
+  const pick = (n) => randomBytes(2).readUInt16BE() % n;
+  for (let i = 0; i < 2000; i++) {
+    const cents = (pick(2) ? 1 : -1) * (randomBytes(6).readUIntBE(0, 6) % 10 ** (1 + pick(13))) + 0;
+    assert.equal(toCents(toDecimal(cents)), cents);
+    assert.equal(toCents(format(cents)), cents);
+    assert.equal(toCents(format(cents, { locale: "en-US" }), { locale: "en" }), cents);
+    const ratios = Array.from({ length: 1 + pick(6) }, () => [0, 1, 2, 3, 0.5, 0.25, 0.1, 0.3, 1 / 3, 7][pick(10)]);
+    if (ratios.some((r) => r > 0)) {
+      const parts = allocate(cents, ratios);
+      assert.equal(parts.reduce((a, b) => a + b, 0), cents);
+      assert.ok(parts.every((p, k) => ratios[k] > 0 || p === 0));
+    }
+    const rate = [21, 9, 0, "21%", "9,5", 4.5][pick(6)];
+    const gross = Math.abs(cents);
+    const fromGross = vatFromGross(gross, rate);
+    assert.equal(fromGross.net + fromGross.vat, gross);
+    assert.equal(percentOf(-gross, rate), 0 - percentOf(gross, rate));
+  }
 });
