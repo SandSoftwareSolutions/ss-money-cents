@@ -10,6 +10,8 @@ Money as whole **cents**, so the totals are right: no `0.1 + 0.2 = 0.30000000000
 npm install @sandsoftwaresolutions/money-cents
 ```
 
+Works with `import` and `require()`, and ships TypeScript types for both.
+
 ## Usage
 
 ```js
